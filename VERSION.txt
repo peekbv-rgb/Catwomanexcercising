@@ -1,6 +1,6 @@
 Fitness Video Factory
-Version: 0.3.1-kling-url-fix
+Version: 0.3.2-dns-warmup
 Rebuilt: 2026-08-18
 Motion engine: Kling Motion Control
-Motion transport: temporary Cloudflare Quick Tunnel
+Motion transport: temporary Cloudflare Quick Tunnel with DNS-over-HTTPS warm-up and Kling retry
 Optional image/voice provider: Runway
