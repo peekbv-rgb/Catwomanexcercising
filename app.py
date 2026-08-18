@@ -15,7 +15,7 @@ from core.runway_client import FitnessRunwayClient
 from core.utils import ensure_dir, slugify
 from core.workout import Exercise, validate_exercises
 
-APP_VERSION = "0.3.1-kling-url-fix"
+APP_VERSION = "0.3.2-dns-warmup"
 
 load_dotenv()
 
@@ -240,7 +240,7 @@ with render_tab:
     st.info(
         "Kling accepteert de motion-video alleen via een echte HTTPS-URL. De app opent daarom per oefening "
         "automatisch een tijdelijke Cloudflare Quick Tunnel naar alleen die lokale MP4. De tunnel sluit zodra "
-        "Kling klaar is. De video wordt niet in deze GitHub-repository opgeslagen."
+        "Kling klaar is. Nieuwe tunnel-hostnamen krijgen nu automatisch extra DNS-warm-up/retries."
     )
 
     voice_enabled = st.checkbox("AI voice-over toevoegen via Runway", value=False)
@@ -265,7 +265,7 @@ with render_tab:
         st.warning("Sla bij voorkeur eerst de workout op in tab 2.")
 
     st.markdown(
-        "**Pipeline:** refs controleren → tijdelijke HTTPS motion-URL → Kling Motion Control → "
+        "**Pipeline:** refs controleren → tijdelijke HTTPS motion-URL → DNS-warm-up → Kling Motion Control → "
         "optionele voice-over → timer/titel → MP4"
     )
     make_video = st.button("🎬 MAAK COMPLETE VIDEO", type="primary", use_container_width=True)
