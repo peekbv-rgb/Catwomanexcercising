@@ -9,22 +9,16 @@ import requests
 from runwayml import RunwayML, TaskFailedError
 
 from .prompts import REFERENCE_PROMPTS
-from .utils import file_to_data_uri, ensure_dir
+from .utils import ensure_dir, file_to_data_uri
 
 
 ProgressFn = Callable[[str], None]
 
-# Runway currently limits data-URI inputs by encoded string length, not just raw file size.
-# Keep a little headroom below the documented limits.
-MAX_CHARACTER_IMAGE_DATA_URI_CHARS = 5_150_000
-MAX_REFERENCE_VIDEO_DATA_URI_CHARS = 16_500_000
-
 
 def _task_failure_message(exc: TaskFailedError, label: str) -> str:
-    """Turn Runway's TaskFailedError into a useful end-user diagnostic."""
     details = getattr(exc, "task_details", None)
     if details is None:
-        return f"{label} is door Runway afgebroken, maar er is geen foutdetail teruggegeven."
+        return f"{label} is door Runway afgebroken zonder foutdetails."
 
     try:
         if hasattr(details, "model_dump"):
@@ -40,10 +34,13 @@ def _task_failure_message(exc: TaskFailedError, label: str) -> str:
     failure_code = payload.get("failureCode") or payload.get("failure_code") or "onbekend"
     failure = payload.get("failure") or payload.get("error") or payload.get("message") or "Geen nadere omschrijving."
 
-    parts = [f"{label} mislukt bij Runway.", f"Foutcode: {failure_code}.", f"Reden: {failure}."]
+    parts = [
+        f"{label} mislukt bij Runway.",
+        f"Foutcode: {failure_code}.",
+        f"Reden: {failure}.",
+    ]
     if task_id:
         parts.append(f"Task-ID: {task_id}.")
-    # Include the compact raw details as fallback because Runway adds new failure fields over time.
     try:
         raw = json.dumps(payload, ensure_ascii=False, default=str)
         if raw and raw != "{}":
@@ -54,24 +51,24 @@ def _task_failure_message(exc: TaskFailedError, label: str) -> str:
 
 
 class FitnessRunwayClient:
-    """Small wrapper around the official Runway Python SDK.
+    """Runway helper used only for character reference images and optional TTS.
 
-    Uses data URIs for local inputs. The app compresses motion-reference videos before
-    sending them so they stay below Runway's data-URI input limit.
+    Full-body fitness motion is handled by Kling Motion Control, not Runway Act-Two.
     """
 
     def __init__(self, api_key: str):
-        if not api_key.strip():
+        api_key = (api_key or "").strip()
+        if not api_key:
             raise ValueError("Runway API key ontbreekt")
-        self.client = RunwayML(api_key=api_key.strip())
+        self.client = RunwayML(api_key=api_key)
 
     @staticmethod
     def _download(url: str, output_path: Path) -> Path:
         output_path.parent.mkdir(parents=True, exist_ok=True)
         with requests.get(url, stream=True, timeout=180) as response:
             response.raise_for_status()
-            with output_path.open("wb") as f:
-                shutil.copyfileobj(response.raw, f)
+            with output_path.open("wb") as handle:
+                shutil.copyfileobj(response.raw, handle)
         return output_path
 
     def generate_reference(
@@ -84,13 +81,19 @@ class FitnessRunwayClient:
         slot = slot.upper()
         if slot not in REFERENCE_PROMPTS:
             raise ValueError(f"Onbekende referentie-slot: {slot}")
+
         output_dir = ensure_dir(output_dir)
         refs = []
         for idx, path in enumerate(subject_paths[:16], start=1):
-            refs.append({"uri": file_to_data_uri(path), "tag": "subject" if idx == 1 else f"ref{idx}"})
+            refs.append(
+                {
+                    "uri": file_to_data_uri(path),
+                    "tag": "subject" if idx == 1 else f"ref{idx}",
+                }
+            )
 
         if progress:
-            progress(f"Referentie {slot} genereren…")
+            progress(f"Referentie {slot} genereren via Runway…")
 
         ratio = "1536:1920" if slot == "E" else "1088:1920"
         try:
@@ -110,47 +113,6 @@ class FitnessRunwayClient:
             raise RuntimeError(f"Runway gaf geen afbeelding terug voor referentie {slot}.")
         return self._download(task.output[0], output_dir / f"reference_{slot}.png")
 
-    def generate_character_performance(
-        self,
-        character_image: str | Path,
-        reference_video: str | Path,
-        output_path: str | Path,
-        expression_intensity: int = 2,
-        progress: ProgressFn | None = None,
-    ) -> Path:
-        if progress:
-            progress(f"Act-Two motion transfer: {Path(reference_video).name}…")
-
-        character_uri = file_to_data_uri(character_image)
-        reference_uri = file_to_data_uri(reference_video)
-
-        if len(character_uri) > MAX_CHARACTER_IMAGE_DATA_URI_CHARS:
-            raise ValueError(
-                "Character-afbeelding is te groot voor Runway Act-Two als data-URI. "
-                "Gebruik een kleinere PNG/JPG (liefst onder circa 3,7 MB)."
-            )
-        if len(reference_uri) > MAX_REFERENCE_VIDEO_DATA_URI_CHARS:
-            raise ValueError(
-                "Motion-reference is na base64-encoding te groot voor Runway Act-Two. "
-                "Kort de clip in of comprimeer hem verder."
-            )
-
-        try:
-            task = self.client.character_performance.create(
-                model="act_two",
-                character={"type": "image", "uri": character_uri},
-                reference={"type": "video", "uri": reference_uri},
-                body_control=True,
-                expression_intensity=max(1, min(5, int(expression_intensity))),
-                ratio="720:1280",
-            ).wait_for_task_output(timeout=20 * 60)
-        except TaskFailedError as exc:
-            raise RuntimeError(_task_failure_message(exc, "Act-Two motion transfer")) from exc
-
-        if not task.output:
-            raise RuntimeError("Runway Act-Two gaf geen video-output terug.")
-        return self._download(task.output[0], Path(output_path))
-
     def generate_tts(
         self,
         text: str,
@@ -158,8 +120,13 @@ class FitnessRunwayClient:
         voice_reference: str | Path | None = None,
         progress: ProgressFn | None = None,
     ) -> Path:
+        text = (text or "").strip()
+        if not text:
+            raise ValueError("Voice-over tekst ontbreekt")
+
         if progress:
-            progress("Voice-over genereren…")
+            progress("Voice-over genereren via Runway…")
+
         kwargs = {
             "model": "seed_audio",
             "prompt_text": text,
@@ -173,6 +140,7 @@ class FitnessRunwayClient:
                 "type": "reference-audio",
                 "audio_uri": file_to_data_uri(voice_reference),
             }
+
         try:
             task = self.client.text_to_speech.create(**kwargs).wait_for_task_output(timeout=10 * 60)
         except TaskFailedError as exc:
