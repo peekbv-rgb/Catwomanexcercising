@@ -9,7 +9,7 @@ from typing import Callable
 
 import requests
 
-from .utils import file_to_data_uri
+from .public_tunnel import TemporaryPublicVideo
 
 
 ProgressFn = Callable[[str], None]
@@ -18,9 +18,9 @@ ProgressFn = Callable[[str], None]
 class FitnessKlingClient:
     """Small direct Kling Open Platform client for Motion Control.
 
-    The API is asynchronous: create a task, poll status, then download the resulting video.
-    API base URL/path can be overridden with environment variables so provider-side API changes
-    can be tested without rewriting the whole application.
+    Kling Motion Control requires video_url to be a real retrievable HTTPS URL. Local motion
+    files are therefore exposed only temporarily through a Cloudflare Quick Tunnel while the
+    Kling task runs. The character image is sent as base64.
     """
 
     DEFAULT_BASE_URL = "https://api.klingai.com"
@@ -144,77 +144,86 @@ class FitnessKlingClient:
         character_orientation = character_orientation if character_orientation in {"video", "image"} else "video"
 
         if progress:
-            progress(f"Kling Motion Control starten: {reference_video.name}…")
+            progress(f"Kling Motion Control voorbereiden: {reference_video.name}…")
 
-        payload = {
-            "model_name": "kling-v3",
-            "image_url": self._image_base64(character_image),
-            "video_url": file_to_data_uri(reference_video),
-            "prompt": (prompt or "")[:2500],
-            "keep_original_sound": "yes" if keep_original_sound else "no",
-            "character_orientation": character_orientation,
-            "mode": mode,
-        }
-
-        created = self._request_json("POST", self.create_path, json=payload)
-        task_id = self._extract_task_id(created)
-        if not task_id:
-            raise RuntimeError(f"Kling gaf geen task_id terug. Antwoord: {created}")
-
-        started = time.monotonic()
-        while True:
-            if time.monotonic() - started > timeout:
-                raise TimeoutError(
-                    f"Kling Motion Control time-out na {timeout / 60:.0f} minuten. Task-ID: {task_id}"
-                )
-
-            time.sleep(self.poll_interval)
-            status_payload = self._request_json("GET", f"{self.create_path}/{task_id}")
-            info = status_payload.get("data") or status_payload
-            status = str(
-                info.get("task_status")
-                or info.get("taskStatus")
-                or info.get("status")
-                or ""
-            ).lower()
+        # Kling validates video_url as an actual downloadable URL; data: URIs are rejected
+        # with code 1201. Keep a temporary HTTPS tunnel alive until Kling is done fetching
+        # and processing the motion video.
+        with TemporaryPublicVideo(reference_video, progress=progress) as public_video_url:
+            payload = {
+                "model_name": "kling-v3",
+                "image_url": self._image_base64(character_image),
+                "video_url": public_video_url,
+                "prompt": (prompt or "")[:2500],
+                "keep_original_sound": "yes" if keep_original_sound else "no",
+                "character_orientation": character_orientation,
+                "mode": mode,
+            }
 
             if progress:
-                label = {
-                    "submitted": "in wachtrij",
-                    "pending": "in wachtrij",
-                    "processing": "wordt gegenereerd",
-                    "running": "wordt gegenereerd",
-                    "succeed": "klaar",
-                    "success": "klaar",
-                    "completed": "klaar",
-                    "failed": "mislukt",
-                    "fail": "mislukt",
-                    "error": "mislukt",
-                }.get(status, status or "status onbekend")
-                progress(f"Kling Motion Control: {label} · task {task_id[:8]}…")
+                progress("Kling Motion Control-taak indienen…")
 
-            if status in {"submitted", "pending", "processing", "running", ""}:
-                continue
+            created = self._request_json("POST", self.create_path, json=payload)
+            task_id = self._extract_task_id(created)
+            if not task_id:
+                raise RuntimeError(f"Kling gaf geen task_id terug. Antwoord: {created}")
 
-            if status in {"failed", "fail", "error"}:
-                reason = (
-                    info.get("task_status_msg")
-                    or info.get("taskStatusMsg")
-                    or info.get("message")
-                    or "Geen foutdetails ontvangen."
-                )
-                raise RuntimeError(
-                    f"Kling Motion Control mislukt. Reden: {reason}. Task-ID: {task_id}."
-                )
-
-            if status in {"succeed", "success", "completed"}:
-                url = self._extract_video_url(status_payload)
-                if not url:
-                    raise RuntimeError(
-                        f"Kling-task is klaar maar bevat geen video-URL. Task-ID: {task_id}. Antwoord: {status_payload}"
+            started = time.monotonic()
+            while True:
+                if time.monotonic() - started > timeout:
+                    raise TimeoutError(
+                        f"Kling Motion Control time-out na {timeout / 60:.0f} minuten. Task-ID: {task_id}"
                     )
-                return self._download(url, output_path)
 
-            raise RuntimeError(
-                f"Onbekende Kling-taskstatus '{status}'. Task-ID: {task_id}. Antwoord: {status_payload}"
-            )
+                time.sleep(self.poll_interval)
+                status_payload = self._request_json("GET", f"{self.create_path}/{task_id}")
+                info = status_payload.get("data") or status_payload
+                status = str(
+                    info.get("task_status")
+                    or info.get("taskStatus")
+                    or info.get("status")
+                    or ""
+                ).lower()
+
+                if progress:
+                    label = {
+                        "submitted": "in wachtrij",
+                        "pending": "in wachtrij",
+                        "processing": "wordt gegenereerd",
+                        "running": "wordt gegenereerd",
+                        "succeed": "klaar",
+                        "success": "klaar",
+                        "completed": "klaar",
+                        "failed": "mislukt",
+                        "fail": "mislukt",
+                        "error": "mislukt",
+                    }.get(status, status or "status onbekend")
+                    progress(f"Kling Motion Control: {label} · task {task_id[:8]}…")
+
+                if status in {"submitted", "pending", "processing", "running", ""}:
+                    continue
+
+                if status in {"failed", "fail", "error"}:
+                    reason = (
+                        info.get("task_status_msg")
+                        or info.get("taskStatusMsg")
+                        or info.get("message")
+                        or "Geen foutdetails ontvangen."
+                    )
+                    raise RuntimeError(
+                        f"Kling Motion Control mislukt. Reden: {reason}. Task-ID: {task_id}."
+                    )
+
+                if status in {"succeed", "success", "completed"}:
+                    url = self._extract_video_url(status_payload)
+                    if not url:
+                        raise RuntimeError(
+                            f"Kling-task is klaar maar bevat geen video-URL. Task-ID: {task_id}. Antwoord: {status_payload}"
+                        )
+                    if progress:
+                        progress("Kling-video downloaden…")
+                    return self._download(url, output_path)
+
+                raise RuntimeError(
+                    f"Onbekende Kling-taskstatus '{status}'. Task-ID: {task_id}. Antwoord: {status_payload}"
+                )
