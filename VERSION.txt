@@ -1,0 +1,5 @@
+Fitness Video Factory
+Version: 0.3.0-clean-rebuild
+Rebuilt: 2026-08-18
+Motion engine: Kling Motion Control
+Optional image/voice provider: Runway
