@@ -1,49 +1,135 @@
 # Fitness Video Factory
 
-Lokale Streamlit-webapp om van één AI-personage + echte motion-reference clips een complete verticale fitnessvideo te maken.
+**Versie: 0.3.0-clean-rebuild**
 
-## Wat de tool automatiseert
+Lokale Streamlit-app voor een AI-fitnessworkflow met een vast character, echte motion-reference clips en automatische montage.
 
-1. **Character references A–E** maken vanuit één basisafbeelding via Runway `gpt_image_2` (optioneel).
-2. Per oefening een passende character-reference kiezen:
-   - A = staand vooraanzicht
-   - B = staand ¾ aanzicht
-   - C = zijaanzicht
-   - D = op trainingsmat
-   - E = close-up gezicht
-3. Motion-reference video normaliseren naar een compacte verticale MP4.
-4. **Kling VIDEO 3.0 Motion Control** gebruiken voor full-body bewegingsoverdracht.
-5. Optionele Nederlandse **AI voice-over** via Runway Seed Audio.
-6. Automatisch oefeningstitel + countdown toevoegen.
-7. Alle oefenclips monteren naar één MP4.
+## Architectuur
 
-> Gebruik voor fitnessbewegingen echte, technisch correcte motion-reference clips. Controleer gegenereerde oefentechniek altijd vóór publicatie.
+- **Kling Motion Control**: full-body oefenbewegingen uit echte motion-reference video's.
+- **Runway (optioneel)**: automatisch genereren van character-referenties A–E en AI voice-over.
+- **MoviePy / FFmpeg**: normaliseren van motion-video's, timer/titel en eindmontage.
 
-## Benodigd
+De app gebruikt bewust geen Runway Act-Two meer voor full-body fitnessbewegingen.
+
+## Character set
+
+- **A** — staand vooraanzicht
+- **B** — staand ¾ aanzicht
+- **C** — zijaanzicht
+- **D** — op trainingsmat
+- **E** — close-up gezicht
+
+Je kunt A–E zelf uploaden. In dat geval is Runway niet nodig voor de character-afbeeldingen.
+
+## Vereisten
 
 - Windows, macOS of Linux
 - Python 3.11 aanbevolen
-- **Kling Open Platform API key + credits** voor Motion Control
-- Optioneel: **Runway API key + credits** voor A–E generatie en/of voice-over
-- Motion-reference clips van 3–30 seconden
+- Kling API key voor Motion Control
+- Optioneel: Runway API key voor A–E generatie en/of voice-over
+- Echte motion-reference video's van 3–30 seconden
 
-## Snel starten op Windows
+## Windows: snel starten
 
-1. Clone/download deze repository.
-2. Kopieer `.env.example` naar `.env`.
-3. Vul je sleutels uitsluitend in je **lokale** `.env` in:
+1. Download de repository via **Code → Download ZIP**.
+2. Pak de ZIP uit naar een nieuwe lege map.
+3. Maak in die map een nieuw bestand `.env` op basis van `.env.example`.
+4. Vul je sleutels lokaal in:
 
 ```env
 KLING_API_KEY=jouw_kling_api_key
 RUNWAYML_API_SECRET=jouw_runway_api_key
 ```
 
-`RUNWAYML_API_SECRET` mag leeg blijven als je bestaande A–E afbeeldingen gebruikt en AI voice-over uitzet.
+Runway is optioneel als je A–E zelf uploadt en voice-over uit laat.
 
-4. Dubbelklik op `start.bat`.
-5. De browser opent normaal op `http://localhost:8501`.
+5. Dubbelklik op:
 
-**Commit `.env` nooit naar GitHub.** Het bestand staat in `.gitignore`.
+```text
+start.bat
+```
+
+6. De app opent normaal op:
+
+```text
+http://localhost:8501
+```
+
+## Belangrijk over `.env` op Windows
+
+Zet in Verkenner **Bestandsnaamextensies** aan. Het bestand moet exact `.env` heten, niet `.env.txt`.
+
+Je echte `.env` staat in `.gitignore` en hoort nooit naar GitHub te worden gecommit.
+
+## Workflow
+
+### 1. Karakter
+
+Upload één basisafbeelding en genereer A–E via Runway, of upload A–E handmatig.
+
+### 2. Training
+
+Per oefening:
+
+- geef de oefening een naam;
+- upload één motion-reference video;
+- kies AUTO/A/B/C/D/E;
+- pas eventueel de voice-overtekst aan.
+
+De app normaliseert de motion-video lokaal naar een compacte 9:16 MP4.
+
+### 3. Maak video
+
+De pipeline:
+
+```text
+character reference
+      +
+motion reference
+      ↓
+Kling Motion Control
+      ↓
+AI fitnessclip
+      ↓
+optionele Runway voice-over
+      ↓
+timer + titel
+      ↓
+finale MP4
+```
+
+## Motion-reference richtlijnen
+
+Voor de beste fitnessresultaten:
+
+- één persoon in beeld;
+- volledig lichaam en hoofd zichtbaar;
+- voeten niet afsnijden;
+- één continue opname;
+- geen cuts;
+- liefst geen bewegende camera;
+- rustige tot gematigde bewegingssnelheid;
+- 3–30 seconden per clip.
+
+Gebruik een technisch correcte uitvoering als referentie. De AI moet de beweging volgen, niet zelf de oefentechniek bedenken.
+
+## Lokale projectdata
+
+Per project wordt lokaal aangemaakt:
+
+```text
+projects/<projectnaam>/
+├─ uploads/
+├─ references/
+├─ motions/
+├─ clips/
+├─ audio/
+├─ output/
+└─ workout.json
+```
+
+`projects/*` wordt niet naar GitHub gestuurd.
 
 ## Handmatig starten
 
@@ -66,94 +152,44 @@ source .venv/bin/activate
 Daarna:
 
 ```bash
-pip install -r requirements.txt
-streamlit run app.py
+python -m pip install -r requirements.txt
+python -m streamlit run app.py
 ```
 
-## Workflow
+## Docker
 
-### 1. Karakter
-
-Upload je eigen A–E referenties, of upload één identity seed en laat de app ontbrekende A–E beelden via Runway maken.
-
-### 2. Training
-
-Vul per oefening in:
-
-- naam
-- motion-reference video
-- character reference (AUTO/A/B/C/D/E)
-- voice-over tekst
-
-Sla daarna de workout op.
-
-### 3. Maak video
-
-Kies links:
-
-- **Kling kwaliteit**: Standard of Professional
-- **Kling oriëntatie**: voor fitness meestal `Volg motion-video`
-- AI voice-over aan/uit
-
-Klik daarna **MAAK COMPLETE VIDEO**.
-
-De pipeline is:
-
-```text
-character refs
-→ motion-reference
-→ Kling 3.0 Motion Control
-→ optionele Runway voice-over
-→ timer + titel
-→ finale MP4
+```bash
+cp .env.example .env
+# vul de lokale .env in
+docker compose up --build
 ```
 
-## Projectmappen
+Open vervolgens `http://localhost:8501`.
 
-Elke projectnaam krijgt lokaal een map onder:
+## Testen
 
-```text
-projects/<projectnaam>/
+```bash
+pytest -q
 ```
 
-met:
+## Problemen oplossen
 
-```text
-uploads/       originele uploads
-references/    A–E character images
-motions/       genormaliseerde motion references
-clips/         Kling Motion Control clips
-audio/         gegenereerde voice-overs
-output/        uiteindelijke MP4
-```
+### App start niet
 
-Projectdata wordt door `.gitignore` niet naar GitHub gestuurd.
+Start `start.bat` opnieuw. Het venster blijft open en toont de foutmelding.
 
-## Techniek
+### `app.py` is 0 KB na handmatig kopiëren
 
-- UI: Streamlit
-- Full-body motion: Kling VIDEO 3.0 Motion Control API
-- Character reference generation: Runway `gpt_image_2`
-- Voice-over: Runway `seed_audio`
-- Video preprocessing: `imageio-ffmpeg`
-- Montage/overlays: MoviePy + Pillow
+Download de complete ZIP opnieuw naar een **nieuwe lege map** in plaats van losse bestanden te kopiëren.
 
-## Motion-reference richtlijnen
+### `.env` wordt niet gelezen
 
-Voor de beste fitnessresultaten:
+Controleer dat het bestand echt `.env` heet en niet `.env.txt`.
 
-- één persoon in beeld
-- volledige persoon en hoofd zichtbaar
-- één doorlopende opname zonder cuts
-- camera liefst stil
-- beweging op rustig/matig tempo
-- full-body character-afbeelding combineren met full-body motion-video
-- 3–30 seconden wanneer de oriëntatie de motion-video volgt
+### Kling weigert de aanvraag
 
-## Eerste test
+De app toont HTTP-status, Kling-code en foutreden. Kopieer alleen die foutmelding voor diagnose; deel nooit je API-key.
 
-Test eerst met **één oefening van 3–5 seconden** in Kling Standard. Zo controleer je de hele keten met zo weinig mogelijk credits voordat je een complete workout rendert.
+## Privacy en rechten
 
-## Veiligheid en rechten
-
-Gebruik alleen afbeeldingen, stemmen en videoreferenties waarvoor je toestemming/gebruiksrechten hebt. Bij fitnesscontent blijft menselijke controle op correcte oefentechniek noodzakelijk.
+Gebruik alleen character-beelden, stemopnames en motion-reference video's waarvoor je toestemming of gebruiksrechten hebt. API-keys blijven lokaal in `.env`.
