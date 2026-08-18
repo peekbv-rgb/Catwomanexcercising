@@ -1,0 +1,9 @@
+{
+  "project": "AI Fitness Coach",
+  "exercises": [
+    {"name": "Squats", "reference_slot": "A", "motion_path": "motions/squats.mp4", "voiceover": "Squats. Houd je borst rustig omhoog, knieën in lijn met je voeten en beweeg gecontroleerd."},
+    {"name": "Reverse lunges", "reference_slot": "B", "motion_path": "motions/reverse-lunges.mp4", "voiceover": "Reverse lunges. Stap rustig naar achteren, blijf stabiel en duw gecontroleerd terug omhoog."},
+    {"name": "Romanian deadlift", "reference_slot": "C", "motion_path": "motions/rdl.mp4", "voiceover": "Romanian deadlift. Duw je heupen naar achteren, houd je rug neutraal en beweeg gecontroleerd."},
+    {"name": "Glute bridge", "reference_slot": "D", "motion_path": "motions/glute-bridge.mp4", "voiceover": "Glute bridge. Duw vanuit je hielen en span je bilspieren bovenaan kort aan."}
+  ]
+}
