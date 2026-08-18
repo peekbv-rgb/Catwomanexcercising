@@ -12,9 +12,7 @@ from moviepy import AudioFileClip, CompositeAudioClip, CompositeVideoClip, Image
 from .utils import ensure_dir
 
 
-# Keep motion references compact because local files are sent to the video provider as
-# encoded request data. 11 MiB leaves useful headroom after base64 encoding.
-MAX_MOTION_VIDEO_BYTES = 11 * 1024 * 1024
+MAX_MOTION_BYTES = 11 * 1024 * 1024
 
 
 def _ffmpeg() -> str:
@@ -22,42 +20,56 @@ def _ffmpeg() -> str:
 
 
 def probe_duration(path: str | Path) -> float:
-    """Get duration through MoviePy/ffmpeg."""
     with VideoFileClip(str(path)) as clip:
         return float(clip.duration)
 
 
 def compress_motion_reference(input_path: str | Path, output_path: str | Path) -> Path:
-    """Normalize a fitness motion reference to a compact H.264 portrait MP4.
-
-    Kling Motion Control accepts 3–30 second references when character orientation follows
-    the motion video. The command scales to fit 720x1280, preserves aspect ratio, pads to
-    portrait, removes audio, normalizes to 30 fps and keeps the request payload manageable.
-    """
-    input_path, output_path = Path(input_path), Path(output_path)
+    """Normalize an uploaded motion reference to a compact portrait H.264 MP4."""
+    input_path = Path(input_path)
+    output_path = Path(output_path)
     output_path.parent.mkdir(parents=True, exist_ok=True)
+
     duration = probe_duration(input_path)
     if duration < 3 or duration > 30:
         raise ValueError(f"Motion-reference moet 3–30 seconden zijn; ontvangen: {duration:.1f}s")
+
     cmd = [
-        _ffmpeg(), "-y", "-i", str(input_path),
+        _ffmpeg(),
+        "-y",
+        "-i",
+        str(input_path),
         "-an",
-        "-vf", "scale=720:1280:force_original_aspect_ratio=decrease,pad=720:1280:(ow-iw)/2:(oh-ih)/2",
-        "-r", "30",
-        "-c:v", "libx264", "-preset", "medium", "-b:v", "1400k", "-maxrate", "1700k", "-bufsize", "2800k",
-        "-pix_fmt", "yuv420p", "-movflags", "+faststart", str(output_path),
+        "-vf",
+        "scale=720:1280:force_original_aspect_ratio=decrease,pad=720:1280:(ow-iw)/2:(oh-ih)/2",
+        "-r",
+        "30",
+        "-c:v",
+        "libx264",
+        "-preset",
+        "medium",
+        "-b:v",
+        "1400k",
+        "-maxrate",
+        "1700k",
+        "-bufsize",
+        "2800k",
+        "-pix_fmt",
+        "yuv420p",
+        "-movflags",
+        "+faststart",
+        str(output_path),
     ]
     subprocess.run(cmd, check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-    if output_path.stat().st_size > MAX_MOTION_VIDEO_BYTES:
+
+    if output_path.stat().st_size > MAX_MOTION_BYTES:
         cmd[cmd.index("1400k")] = "900k"
         cmd[cmd.index("1700k")] = "1100k"
         cmd[cmd.index("2800k")] = "1800k"
         subprocess.run(cmd, check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-    if output_path.stat().st_size > MAX_MOTION_VIDEO_BYTES:
-        raise ValueError(
-            "Motion-reference blijft te groot om betrouwbaar via de lokale API-pipeline te versturen. "
-            "Kort de clip in of verlaag de bronresolutie."
-        )
+
+    if output_path.stat().st_size > MAX_MOTION_BYTES:
+        raise ValueError("Motion-reference blijft te groot. Kort de clip in of verlaag de bronresolutie.")
     return output_path
 
 
@@ -109,11 +121,17 @@ def decorate_clip(video_path: str | Path, exercise_name: str, voiceover_path: st
     base = VideoFileClip(str(video_path)).without_audio()
     overlays = [base]
     overlays.append(ImageClip(_title_overlay(exercise_name.upper(), base.w, base.h)).with_duration(base.duration))
+
     total_seconds = max(1, int(math.ceil(base.duration)))
     for sec in range(total_seconds):
         remaining = max(0, total_seconds - sec)
-        overlay = ImageClip(_timer_overlay(remaining, base.w, base.h)).with_start(sec).with_duration(min(1, base.duration - sec))
-        overlays.append(overlay)
+        duration = min(1, max(0.01, base.duration - sec))
+        overlays.append(
+            ImageClip(_timer_overlay(remaining, base.w, base.h))
+            .with_start(sec)
+            .with_duration(duration)
+        )
+
     composite = CompositeVideoClip(overlays, size=(base.w, base.h)).with_duration(base.duration)
     if voiceover_path and Path(voiceover_path).exists():
         audio = AudioFileClip(str(voiceover_path))
@@ -131,12 +149,15 @@ def render_final_video(
 ) -> Path:
     if not items:
         raise ValueError("Geen clips om te renderen.")
+
     clips = []
+    final = None
     try:
         for i, (video_path, name, voiceover_path) in enumerate(items, start=1):
             if progress:
                 progress(f"Clip {i}/{len(items)} monteren: {name}")
             clips.append(decorate_clip(video_path, name, voiceover_path))
+
         final = concatenate_videoclips(clips, method="compose")
         output_path = Path(output_path)
         ensure_dir(output_path.parent)
@@ -150,9 +171,13 @@ def render_final_video(
             threads=4,
             logger=None,
         )
-        final.close()
         return output_path
     finally:
+        if final is not None:
+            try:
+                final.close()
+            except Exception:
+                pass
         for clip in clips:
             try:
                 clip.close()
