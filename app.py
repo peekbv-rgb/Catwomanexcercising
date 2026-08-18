@@ -8,6 +8,7 @@ from pathlib import Path
 import streamlit as st
 from dotenv import load_dotenv
 
+from core.kling_client import FitnessKlingClient
 from core.media import compress_motion_reference, render_final_video
 from core.prompts import auto_reference_slot, cue_for_exercise
 from core.runway_client import FitnessRunwayClient
@@ -43,17 +44,39 @@ def status_callback(container):
 
 
 st.title("🏋️ Fitness Video Factory")
-st.caption("Van één AI-personage + echte motion-reference clips naar een gemonteerde verticale fitnessvideo.")
+st.caption("Van één AI-personage + echte bewegingsreferenties naar een gemonteerde verticale fitnessvideo.")
 
 with st.sidebar:
     st.header("Instellingen")
     project_name = st.text_input("Projectnaam", value="AI Fitness Coach")
-    api_key = st.text_input(
-        "Runway API key",
+
+    kling_api_key = st.text_input(
+        "Kling API key · beweging",
+        value=os.getenv("KLING_API_KEY", ""),
+        type="password",
+        help="Kling VIDEO 3.0 Motion Control maakt de full-body oefenclips.",
+    )
+    runway_api_key = st.text_input(
+        "Runway API key · beelden/voice-over",
         value=os.getenv("RUNWAYML_API_SECRET", ""),
         type="password",
-        help="Wordt alleen in deze sessie gebruikt. Sla hem desgewenst lokaal op in .env.",
+        help="Alleen nodig voor automatisch A–E maken en/of AI voice-over.",
     )
+
+    kling_mode = st.selectbox(
+        "Kling kwaliteit",
+        options=["std", "pro"],
+        index=0,
+        format_func=lambda value: "Standard · voordeliger" if value == "std" else "Professional · hogere kwaliteit",
+    )
+    character_orientation = st.selectbox(
+        "Kling oriëntatie",
+        options=["video", "image"],
+        index=0,
+        format_func=lambda value: "Volg motion-video · aanbevolen fitness" if value == "video" else "Behoud oriëntatie characterfoto",
+        help="Voor complexe full-body fitnessbewegingen is 'video' doorgaans de beste keuze en ondersteunt dit motion-clips tot 30 seconden.",
+    )
+
     st.markdown("---")
     st.caption("Gebruik alleen beelden, stemmen en motion-reference video's waarvoor je toestemming/rechten hebt.")
 
@@ -62,7 +85,7 @@ project_dir = get_project_dir(project_name)
 if "session_id" not in st.session_state:
     st.session_state.session_id = str(uuid.uuid4())[:8]
 
-character_tab, workout_tab, render_tab = st.tabs(["1. Character", "2. Workout", "3. Maak video"])
+character_tab, workout_tab, render_tab = st.tabs(["1. Karakter", "2. Training", "3. Maak video"])
 
 with character_tab:
     st.subheader("Character reference set A–E")
@@ -96,12 +119,12 @@ with character_tab:
         st.caption("A = vooraanzicht · B = ¾ · C = zijaanzicht · D = mat · E = close-up")
 
     if generate_refs:
-        if not api_key:
-            st.error("Vul eerst je Runway API key in.")
+        if not runway_api_key:
+            st.error("Vul eerst je Runway API key in. Die wordt alleen voor het maken van A–E gebruikt.")
         elif not seed_path.exists():
             st.error("Upload eerst een basisafbeelding.")
         else:
-            run = FitnessRunwayClient(api_key)
+            run = FitnessRunwayClient(runway_api_key)
             status = st.empty()
             cb = status_callback(status)
             try:
@@ -120,7 +143,10 @@ with character_tab:
 
 with workout_tab:
     st.subheader("Workout samenstellen")
-    st.info("Gebruik echte, technisch correcte motion-reference clips van 3–30 seconden. Het model neemt die beweging over.")
+    st.info(
+        "Gebruik echte, technisch correcte motion-reference clips van 3–30 seconden. "
+        "Kling Motion Control neemt de full-body beweging over."
+    )
     default_names = [
         "Squats",
         "Reverse lunges",
@@ -179,6 +205,7 @@ with workout_tab:
 
 with render_tab:
     st.subheader("Eén knop → complete fitnessvideo")
+    st.success("Full-body motion gebruikt nu Kling VIDEO 3.0 Motion Control in plaats van Runway Act-Two.")
     voice_enabled = st.checkbox("AI voice-over toevoegen", value=True)
     voice_ref_upload = st.file_uploader(
         "Optioneel: eigen stemreferentie (audio)",
@@ -199,12 +226,19 @@ with render_tab:
     else:
         st.warning("Sla eerst de workout op in tab 2. Je kunt ook direct renderen met de huidige invoer.")
 
-    st.markdown("**Pipeline:** refs controleren → motions comprimeren → Act-Two per oefening → voice-over → timer/titel → MP4")
+    st.markdown(
+        "**Pipeline:** refs controleren → motion controleren → Kling 3.0 Motion Control per oefening "
+        "→ optionele Runway voice-over → timer/titel → MP4"
+    )
+    st.caption("Kling 3.0 Motion Control kost momenteel 9 credits/s in Standard en 12 credits/s in Professional.")
     make_video = st.button("🎬 MAAK COMPLETE VIDEO", type="primary", use_container_width=True)
 
     if make_video:
-        if not api_key:
-            st.error("Vul eerst je Runway API key in.")
+        if not kling_api_key:
+            st.error("Vul links eerst je Kling API key in.")
+            st.stop()
+        if voice_enabled and not runway_api_key:
+            st.error("Voice-over staat aan. Vul ook je Runway API key in of zet AI voice-over uit.")
             st.stop()
 
         exercises = [Exercise(**spec).normalized() for spec in exercise_specs]
@@ -221,7 +255,8 @@ with render_tab:
                 st.error(error)
             st.stop()
 
-        run = FitnessRunwayClient(api_key)
+        kling = FitnessKlingClient(kling_api_key)
+        runway = FitnessRunwayClient(runway_api_key) if voice_enabled else None
         status = st.empty()
         progress = st.progress(0.0)
         cb = status_callback(status)
@@ -233,18 +268,33 @@ with render_tab:
             for idx, ex in enumerate(exercises, start=1):
                 ref_path = project_dir / "references" / f"reference_{ex.reference_slot}.png"
                 motion_path = Path(ex.motion_path)
-                clip_path = project_dir / "clips" / f"{idx:02d}_{ex.slug}.mp4"
+                clip_path = project_dir / "clips" / f"{idx:02d}_{ex.slug}_kling3_{kling_mode}.mp4"
                 audio_path = project_dir / "audio" / f"{idx:02d}_{ex.slug}.mp3"
 
                 if not clip_path.exists():
-                    run.generate_character_performance(ref_path, motion_path, clip_path, progress=cb)
+                    prompt = (
+                        "Photorealistic fitness instruction video. Preserve the exact character identity, "
+                        "face, hairstyle, body proportions and sports outfit from the character image. "
+                        "Reproduce the motion reference accurately with natural anatomy, stable hands and feet, "
+                        f"and realistic balance. Exercise: {ex.name}. Clean modern fitness studio."
+                    )
+                    kling.generate_motion_control(
+                        ref_path,
+                        motion_path,
+                        clip_path,
+                        prompt=prompt,
+                        mode=kling_mode,
+                        character_orientation=character_orientation,
+                        keep_original_sound=False,
+                        progress=cb,
+                    )
                 done += 1
                 progress.progress(done / total_steps)
 
                 audio_for_render = None
-                if voice_enabled:
+                if voice_enabled and runway is not None:
                     if not audio_path.exists():
-                        run.generate_tts(ex.voiceover, audio_path, voice_reference=voice_ref_path, progress=cb)
+                        runway.generate_tts(ex.voiceover, audio_path, voice_reference=voice_ref_path, progress=cb)
                     audio_for_render = audio_path
                     done += 1
                     progress.progress(done / total_steps)
@@ -269,4 +319,7 @@ with render_tab:
             st.exception(exc)
 
 st.markdown("---")
-st.caption("Fitness Video Factory · lokale projectbestanden blijven in de map projects/. API-generaties kosten Runway-credits.")
+st.caption(
+    "Fitness Video Factory · projectbestanden blijven lokaal in projects/. "
+    "Kling wordt gebruikt voor full-body motion; Runway alleen voor optionele referentiebeelden/voice-over."
+)
