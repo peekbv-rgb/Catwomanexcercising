@@ -15,6 +15,8 @@ from core.runway_client import FitnessRunwayClient
 from core.utils import ensure_dir, slugify
 from core.workout import Exercise, validate_exercises
 
+APP_VERSION = "0.3.0-clean-rebuild"
+
 load_dotenv()
 
 APP_ROOT = Path(__file__).resolve().parent
@@ -25,10 +27,10 @@ st.set_page_config(page_title="Fitness Video Factory", page_icon="🏋️", layo
 
 def get_project_dir(project_name: str) -> Path:
     key = slugify(project_name or "fitness-project")
-    p = ensure_dir(PROJECTS_DIR / key)
+    project = ensure_dir(PROJECTS_DIR / key)
     for sub in ("uploads", "references", "motions", "clips", "audio", "output"):
-        ensure_dir(p / sub)
-    return p
+        ensure_dir(project / sub)
+    return project
 
 
 def save_upload(upload, path: Path) -> Path:
@@ -40,11 +42,14 @@ def save_upload(upload, path: Path) -> Path:
 def status_callback(container):
     def cb(message: str):
         container.info(message)
+
     return cb
 
 
 st.title("🏋️ Fitness Video Factory")
-st.caption("Van één AI-personage + echte bewegingsreferenties naar een gemonteerde verticale fitnessvideo.")
+st.caption(
+    "Full-body fitness motion via Kling Motion Control · character references en optionele voice-over via Runway."
+)
 
 with st.sidebar:
     st.header("Instellingen")
@@ -54,31 +59,33 @@ with st.sidebar:
         "Kling API key · beweging",
         value=os.getenv("KLING_API_KEY", ""),
         type="password",
-        help="Kling VIDEO 3.0 Motion Control maakt de full-body oefenclips.",
+        help="Nodig voor Motion Control. Bewaar de key lokaal in .env.",
     )
+
     runway_api_key = st.text_input(
         "Runway API key · beelden/voice-over",
         value=os.getenv("RUNWAYML_API_SECRET", ""),
         type="password",
-        help="Alleen nodig voor automatisch A–E maken en/of AI voice-over.",
+        help="Alleen nodig voor automatisch maken van A–E en/of AI voice-over.",
     )
 
-    kling_mode = st.selectbox(
+    kling_mode_label = st.selectbox(
         "Kling kwaliteit",
-        options=["std", "pro"],
+        ["Standard", "Professional"],
         index=0,
-        format_func=lambda value: "Standard · voordeliger" if value == "std" else "Professional · hogere kwaliteit",
     )
-    character_orientation = st.selectbox(
+    kling_mode = "std" if kling_mode_label == "Standard" else "pro"
+
+    orientation_label = st.selectbox(
         "Kling oriëntatie",
-        options=["video", "image"],
+        ["Volg motion-video · aanbevolen fitness", "Volg character-afbeelding"],
         index=0,
-        format_func=lambda value: "Volg motion-video · aanbevolen fitness" if value == "video" else "Behoud oriëntatie characterfoto",
-        help="Voor complexe full-body fitnessbewegingen is 'video' doorgaans de beste keuze en ondersteunt dit motion-clips tot 30 seconden.",
     )
+    kling_orientation = "video" if orientation_label.startswith("Volg motion") else "image"
 
     st.markdown("---")
-    st.caption("Gebruik alleen beelden, stemmen en motion-reference video's waarvoor je toestemming/rechten hebt.")
+    st.caption(f"Versie {APP_VERSION}")
+    st.caption("Gebruik alleen beelden, stemmen en motion-video's waarvoor je toestemming/rechten hebt.")
 
 project_dir = get_project_dir(project_name)
 
@@ -89,9 +96,13 @@ character_tab, workout_tab, render_tab = st.tabs(["1. Karakter", "2. Training", 
 
 with character_tab:
     st.subheader("Character reference set A–E")
-    st.write("Upload één basisafbeelding en laat A–E automatisch maken, óf upload je eigen A–E referenties.")
+    st.write("Upload één basisafbeelding en laat A–E maken, of upload je eigen A–E referenties.")
 
-    seed_upload = st.file_uploader("Basisafbeelding / identity seed", type=["png", "jpg", "jpeg", "webp"], key="seed")
+    seed_upload = st.file_uploader(
+        "Basisafbeelding / identity seed",
+        type=["png", "jpg", "jpeg", "webp"],
+        key="seed",
+    )
     seed_path = project_dir / "uploads" / "identity_seed.png"
     if seed_upload is not None:
         seed_path = save_upload(seed_upload, seed_path)
@@ -99,18 +110,22 @@ with character_tab:
     elif seed_path.exists():
         st.image(str(seed_path), width=260, caption="Identity seed (opgeslagen)")
 
-    st.markdown("### Eigen referenties uploaden")
+    st.markdown("### Referenties")
     cols = st.columns(5)
     for idx, slot in enumerate("ABCDE"):
         with cols[idx]:
-            up = st.file_uploader(f"{slot}", type=["png", "jpg", "jpeg", "webp"], key=f"ref_{slot}")
+            upload = st.file_uploader(
+                slot,
+                type=["png", "jpg", "jpeg", "webp"],
+                key=f"ref_{slot}",
+            )
             ref_path = project_dir / "references" / f"reference_{slot}.png"
-            if up is not None:
-                save_upload(up, ref_path)
+            if upload is not None:
+                save_upload(upload, ref_path)
             if ref_path.exists():
                 st.image(str(ref_path), use_container_width=True, caption=slot)
             else:
-                st.caption(f"{slot}: nog niet aanwezig")
+                st.caption(f"{slot}: ontbreekt")
 
     c1, c2 = st.columns([1, 2])
     with c1:
@@ -120,7 +135,7 @@ with character_tab:
 
     if generate_refs:
         if not runway_api_key:
-            st.error("Vul eerst je Runway API key in. Die wordt alleen voor het maken van A–E gebruikt.")
+            st.error("Vul eerst je Runway API key in, of upload A–E handmatig.")
         elif not seed_path.exists():
             st.error("Upload eerst een basisafbeelding.")
         else:
@@ -140,13 +155,15 @@ with character_tab:
                 st.rerun()
             except Exception as exc:
                 status.error(f"Genereren mislukt: {exc}")
+                st.exception(exc)
 
 with workout_tab:
     st.subheader("Workout samenstellen")
     st.info(
-        "Gebruik echte, technisch correcte motion-reference clips van 3–30 seconden. "
-        "Kling Motion Control neemt de full-body beweging over."
+        "Gebruik per oefening één echte, technisch correcte motion-reference van 3–30 seconden. "
+        "Hele lichaam en hoofd moeten zichtbaar blijven; vermijd cuts en camerabewegingen."
     )
+
     default_names = [
         "Squats",
         "Reverse lunges",
@@ -161,8 +178,9 @@ with workout_tab:
     exercise_specs: list[dict] = []
     for i in range(int(count)):
         st.markdown(f"#### {i + 1}. Oefening")
-        left, mid, right = st.columns([2.2, 1, 2.8])
+        left, middle, right = st.columns([2.1, 1.2, 2.7])
         default_name = default_names[i] if i < len(default_names) else f"Oefening {i + 1}"
+
         with left:
             name = st.text_input("Naam", value=default_name, key=f"name_{i}")
             auto_slot = auto_reference_slot(name)
@@ -171,23 +189,34 @@ with workout_tab:
                 ["AUTO", "A", "B", "C", "D", "E"],
                 index=0,
                 key=f"slot_{i}",
-                help=f"AUTO kiest nu {auto_slot} voor deze naam.",
+                help=f"AUTO kiest nu {auto_slot}.",
             )
-        with mid:
-            motion = st.file_uploader("Motion video", type=["mp4", "mov", "m4v"], key=f"motion_{i}")
-            existing_motion = project_dir / "motions" / f"{i+1:02d}_{slugify(name)}.mp4"
+
+        with middle:
+            motion = st.file_uploader(
+                "Motion video",
+                type=["mp4", "mov", "m4v"],
+                key=f"motion_{i}",
+            )
+            existing_motion = project_dir / "motions" / f"{i + 1:02d}_{slugify(name)}.mp4"
             if motion is not None:
-                raw_path = project_dir / "uploads" / f"motion_raw_{i+1:02d}{Path(motion.name).suffix.lower()}"
+                raw_path = project_dir / "uploads" / f"motion_raw_{i + 1:02d}{Path(motion.name).suffix.lower()}"
                 save_upload(motion, raw_path)
                 try:
                     compress_motion_reference(raw_path, existing_motion)
-                    st.success("Klaar")
+                    st.success("Motion klaar")
                 except Exception as exc:
                     st.error(str(exc))
             elif existing_motion.exists():
                 st.caption("✓ motion opgeslagen")
+
         with right:
-            voice = st.text_area("Voice-over", value=cue_for_exercise(name), key=f"voice_{i}", height=95)
+            voice = st.text_area(
+                "Voice-over",
+                value=cue_for_exercise(name),
+                key=f"voice_{i}",
+                height=95,
+            )
 
         exercise_specs.append(
             {
@@ -200,18 +229,21 @@ with workout_tab:
 
     if st.button("💾 Sla workout op"):
         config = {"project": project_name, "exercises": exercise_specs}
-        (project_dir / "workout.json").write_text(json.dumps(config, ensure_ascii=False, indent=2), encoding="utf-8")
+        (project_dir / "workout.json").write_text(
+            json.dumps(config, ensure_ascii=False, indent=2),
+            encoding="utf-8",
+        )
         st.success("Workout opgeslagen.")
 
 with render_tab:
     st.subheader("Eén knop → complete fitnessvideo")
-    st.success("Full-body motion gebruikt nu Kling VIDEO 3.0 Motion Control in plaats van Runway Act-Two.")
-    voice_enabled = st.checkbox("AI voice-over toevoegen", value=True)
+    voice_enabled = st.checkbox("AI voice-over toevoegen via Runway", value=False)
     voice_ref_upload = st.file_uploader(
-        "Optioneel: eigen stemreferentie (audio)",
+        "Optioneel: eigen stemreferentie",
         type=["mp3", "wav", "m4a"],
         help="Alleen gebruiken met toestemming van de stem-eigenaar.",
     )
+
     voice_ref_path = None
     if voice_ref_upload is not None:
         voice_ref_path = save_upload(
@@ -224,21 +256,20 @@ with render_tab:
         stored = json.loads(workout_path.read_text(encoding="utf-8"))
         exercise_specs = stored.get("exercises", exercise_specs)
     else:
-        st.warning("Sla eerst de workout op in tab 2. Je kunt ook direct renderen met de huidige invoer.")
+        st.warning("Sla bij voorkeur eerst de workout op in tab 2.")
 
     st.markdown(
-        "**Pipeline:** refs controleren → motion controleren → Kling 3.0 Motion Control per oefening "
-        "→ optionele Runway voice-over → timer/titel → MP4"
+        "**Pipeline:** refs controleren → Kling Motion Control per oefening → "
+        "optionele voice-over → timer/titel → MP4"
     )
-    st.caption("Kling 3.0 Motion Control kost momenteel 9 credits/s in Standard en 12 credits/s in Professional.")
     make_video = st.button("🎬 MAAK COMPLETE VIDEO", type="primary", use_container_width=True)
 
     if make_video:
         if not kling_api_key:
-            st.error("Vul links eerst je Kling API key in.")
+            st.error("Vul eerst je Kling API key in.")
             st.stop()
         if voice_enabled and not runway_api_key:
-            st.error("Voice-over staat aan. Vul ook je Runway API key in of zet AI voice-over uit.")
+            st.error("Voice-over staat aan, maar Runway API key ontbreekt.")
             st.stop()
 
         exercises = [Exercise(**spec).normalized() for spec in exercise_specs]
@@ -256,7 +287,7 @@ with render_tab:
             st.stop()
 
         kling = FitnessKlingClient(kling_api_key)
-        runway = FitnessRunwayClient(runway_api_key) if voice_enabled else None
+        runway = FitnessRunwayClient(runway_api_key) if runway_api_key else None
         status = st.empty()
         progress = st.progress(0.0)
         cb = status_callback(status)
@@ -265,36 +296,41 @@ with render_tab:
         try:
             total_steps = len(exercises) * (2 if voice_enabled else 1) + 1
             done = 0
+
             for idx, ex in enumerate(exercises, start=1):
                 ref_path = project_dir / "references" / f"reference_{ex.reference_slot}.png"
                 motion_path = Path(ex.motion_path)
-                clip_path = project_dir / "clips" / f"{idx:02d}_{ex.slug}_kling3_{kling_mode}.mp4"
+                clip_path = project_dir / "clips" / f"{idx:02d}_{ex.slug}.mp4"
                 audio_path = project_dir / "audio" / f"{idx:02d}_{ex.slug}.mp3"
 
                 if not clip_path.exists():
-                    prompt = (
-                        "Photorealistic fitness instruction video. Preserve the exact character identity, "
-                        "face, hairstyle, body proportions and sports outfit from the character image. "
-                        "Reproduce the motion reference accurately with natural anatomy, stable hands and feet, "
-                        f"and realistic balance. Exercise: {ex.name}. Clean modern fitness studio."
-                    )
                     kling.generate_motion_control(
-                        ref_path,
-                        motion_path,
-                        clip_path,
-                        prompt=prompt,
+                        character_image=ref_path,
+                        reference_video=motion_path,
+                        output_path=clip_path,
+                        prompt=(
+                            "Photorealistic fitness studio. Preserve the exact character identity, clothing, "
+                            "hair, body proportions and gym environment. Follow the reference exercise motion "
+                            "accurately with realistic anatomy and stable hands and feet."
+                        ),
                         mode=kling_mode,
-                        character_orientation=character_orientation,
-                        keep_original_sound=False,
+                        character_orientation=kling_orientation,
                         progress=cb,
                     )
                 done += 1
                 progress.progress(done / total_steps)
 
                 audio_for_render = None
-                if voice_enabled and runway is not None:
+                if voice_enabled:
+                    if runway is None:
+                        raise RuntimeError("Runway client ontbreekt voor voice-over.")
                     if not audio_path.exists():
-                        runway.generate_tts(ex.voiceover, audio_path, voice_reference=voice_ref_path, progress=cb)
+                        runway.generate_tts(
+                            ex.voiceover,
+                            audio_path,
+                            voice_reference=voice_ref_path,
+                            progress=cb,
+                        )
                     audio_for_render = audio_path
                     done += 1
                     progress.progress(done / total_steps)
@@ -320,6 +356,6 @@ with render_tab:
 
 st.markdown("---")
 st.caption(
-    "Fitness Video Factory · projectbestanden blijven lokaal in projects/. "
-    "Kling wordt gebruikt voor full-body motion; Runway alleen voor optionele referentiebeelden/voice-over."
+    f"Fitness Video Factory {APP_VERSION} · projectbestanden blijven lokaal in projects/. "
+    "AI-generaties gebruiken credits bij de gekozen providers."
 )
