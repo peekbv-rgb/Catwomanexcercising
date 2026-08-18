@@ -160,10 +160,43 @@ class FitnessKlingClient:
                 "mode": mode,
             }
 
-            if progress:
-                progress("Kling Motion Control-taak indienen…")
+            # A brand-new trycloudflare.com hostname can be visible in public DNS a few seconds
+            # before every external resolver has caught up. If Kling returns 1201 during that
+            # short window, keep the same tunnel alive and retry instead of making the user start over.
+            created = None
+            retry_delays = (0, 8, 15, 25)
+            last_error: Exception | None = None
+            for attempt, delay in enumerate(retry_delays, start=1):
+                if delay:
+                    if progress:
+                        progress(
+                            f"Kling zag de nieuwe video-URL nog niet; DNS-warm-up {delay}s en opnieuw proberen "
+                            f"({attempt}/{len(retry_delays)})…"
+                        )
+                    time.sleep(delay)
 
-            created = self._request_json("POST", self.create_path, json=payload)
+                if progress:
+                    progress("Kling Motion Control-taak indienen…")
+
+                try:
+                    created = self._request_json("POST", self.create_path, json=payload)
+                    break
+                except RuntimeError as exc:
+                    last_error = exc
+                    text = str(exc).lower()
+                    retryable_video_url_error = (
+                        "kling-code: 1201" in text
+                        or "video url is invalid" in text
+                        or "video_url" in text and "invalid" in text
+                    )
+                    if not retryable_video_url_error or attempt == len(retry_delays):
+                        raise
+
+            if created is None:
+                if last_error is not None:
+                    raise last_error
+                raise RuntimeError("Kling Motion Control kon niet worden gestart.")
+
             task_id = self._extract_task_id(created)
             if not task_id:
                 raise RuntimeError(f"Kling gaf geen task_id terug. Antwoord: {created}")
