@@ -12,7 +12,9 @@ from moviepy import AudioFileClip, CompositeAudioClip, CompositeVideoClip, Image
 from .utils import ensure_dir
 
 
-MAX_DATA_URI_VIDEO_BYTES = 15 * 1024 * 1024
+# Runway's Act-Two data-URI limit applies to the encoded URI string. Base64 adds roughly
+# 33% overhead, so keep the raw MP4 comfortably below 12 MiB.
+MAX_DATA_URI_VIDEO_BYTES = 11 * 1024 * 1024
 
 
 def _ffmpeg() -> str:
@@ -26,10 +28,11 @@ def probe_duration(path: str | Path) -> float:
 
 
 def compress_motion_reference(input_path: str | Path, output_path: str | Path) -> Path:
-    """Normalize a motion reference to a compact H.264 MP4 below the API data-URI limit.
+    """Normalize a motion reference to a compact H.264 MP4 for Runway Act-Two.
 
     Fitness reference clips are expected to be 3–30s. The command scales to fit 720x1280,
-    preserves aspect ratio, pads to portrait, removes audio, and targets ~2 Mbps.
+    preserves aspect ratio, pads to portrait, removes audio, normalizes to 30 fps and keeps
+    enough headroom for Runway's base64 data-URI limit.
     """
     input_path, output_path = Path(input_path), Path(output_path)
     output_path.parent.mkdir(parents=True, exist_ok=True)
@@ -40,17 +43,21 @@ def compress_motion_reference(input_path: str | Path, output_path: str | Path) -
         _ffmpeg(), "-y", "-i", str(input_path),
         "-an",
         "-vf", "scale=720:1280:force_original_aspect_ratio=decrease,pad=720:1280:(ow-iw)/2:(oh-ih)/2",
-        "-c:v", "libx264", "-preset", "medium", "-b:v", "1800k", "-maxrate", "2200k", "-bufsize", "3600k",
+        "-r", "30",
+        "-c:v", "libx264", "-preset", "medium", "-b:v", "1400k", "-maxrate", "1700k", "-bufsize", "2800k",
         "-pix_fmt", "yuv420p", "-movflags", "+faststart", str(output_path),
     ]
     subprocess.run(cmd, check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     if output_path.stat().st_size > MAX_DATA_URI_VIDEO_BYTES:
-        cmd[cmd.index("1800k")] = "1100k"
-        cmd[cmd.index("2200k")] = "1400k"
-        cmd[cmd.index("3600k")] = "2200k"
+        cmd[cmd.index("1400k")] = "900k"
+        cmd[cmd.index("1700k")] = "1100k"
+        cmd[cmd.index("2800k")] = "1800k"
         subprocess.run(cmd, check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     if output_path.stat().st_size > MAX_DATA_URI_VIDEO_BYTES:
-        raise ValueError("Motion-reference blijft groter dan 15 MB. Kort de clip in of verlaag de bronresolutie.")
+        raise ValueError(
+            "Motion-reference blijft te groot voor Runway Act-Two na base64-encoding. "
+            "Kort de clip in of verlaag de bronresolutie."
+        )
     return output_path
 
 
