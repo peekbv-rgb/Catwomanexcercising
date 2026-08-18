@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import dataclass, asdict
+from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any
 
@@ -34,14 +34,16 @@ class Exercise:
 def validate_exercises(exercises: list[Exercise]) -> list[str]:
     errors: list[str] = []
     if not exercises:
-        errors.append("Voeg minimaal één oefening toe.")
-        return errors
-    for i, ex in enumerate(exercises, start=1):
-        n = ex.normalized()
-        if not n.name:
+        return ["Voeg minimaal één oefening toe."]
+
+    for i, exercise in enumerate(exercises, start=1):
+        normalized = exercise.normalized()
+        if not normalized.name:
             errors.append(f"Oefening {i}: naam ontbreekt.")
-        if n.reference_slot not in {"A", "B", "C", "D", "E"}:
-            errors.append(f"Oefening {i}: ongeldige referentie {n.reference_slot}.")
-        if not n.motion_path or not Path(n.motion_path).exists():
-            errors.append(f"Oefening {i} ({n.name or 'zonder naam'}): motion-reference ontbreekt.")
+        if normalized.reference_slot not in {"A", "B", "C", "D", "E"}:
+            errors.append(f"Oefening {i}: ongeldige referentie {normalized.reference_slot}.")
+        if not normalized.motion_path or not Path(normalized.motion_path).exists():
+            errors.append(
+                f"Oefening {i} ({normalized.name or 'zonder naam'}): bewegingsreferentie ontbreekt."
+            )
     return errors
