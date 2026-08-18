@@ -16,7 +16,6 @@ def file_to_data_uri(path: str | Path) -> str:
     path = Path(path)
     mime, _ = mimetypes.guess_type(path.name)
     if not mime:
-        suffix = path.suffix.lower()
         mime = {
             ".png": "image/png",
             ".jpg": "image/jpeg",
@@ -24,14 +23,16 @@ def file_to_data_uri(path: str | Path) -> str:
             ".webp": "image/webp",
             ".mp4": "video/mp4",
             ".mov": "video/quicktime",
+            ".m4v": "video/x-m4v",
             ".mp3": "audio/mpeg",
             ".wav": "audio/wav",
-        }.get(suffix, "application/octet-stream")
+            ".m4a": "audio/mp4",
+        }.get(path.suffix.lower(), "application/octet-stream")
     payload = base64.b64encode(path.read_bytes()).decode("ascii")
     return f"data:{mime};base64,{payload}"
 
 
 def ensure_dir(path: str | Path) -> Path:
-    p = Path(path)
-    p.mkdir(parents=True, exist_ok=True)
-    return p
+    directory = Path(path)
+    directory.mkdir(parents=True, exist_ok=True)
+    return directory
