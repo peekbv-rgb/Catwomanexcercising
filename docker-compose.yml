@@ -1,0 +1,9 @@
+services:
+  fitness-video-factory:
+    build: .
+    ports:
+      - "8501:8501"
+    env_file:
+      - .env
+    volumes:
+      - ./projects:/app/projects
