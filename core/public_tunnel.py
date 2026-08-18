@@ -12,12 +12,14 @@ import threading
 import time
 from pathlib import Path
 from typing import Callable
+from urllib.parse import urlparse
 
 import requests
 
 
 ProgressFn = Callable[[str], None]
 _TRYCLOUDFLARE_RE = re.compile(r"https://[a-z0-9-]+\.trycloudflare\.com", re.IGNORECASE)
+_DOH_URL = "https://cloudflare-dns.com/dns-query"
 
 
 class _VideoServer(http.server.ThreadingHTTPServer):
@@ -114,6 +116,11 @@ class TemporaryPublicVideo:
     Kling Motion Control requires video_url to be a retrievable HTTPS URL. This context manager
     keeps the file on the user's computer and opens a temporary TryCloudflare URL only while
     Kling needs it. The tunnel and local HTTP server are stopped automatically afterwards.
+
+    Newly-created TryCloudflare hostnames can need a brief DNS warm-up. Windows/ISP resolvers can
+    also temporarily cache NXDOMAIN. Therefore readiness is checked via Cloudflare DNS-over-HTTPS
+    first; a local HTTP check is useful when it works but is no longer allowed to abort a valid
+    tunnel solely because the local Windows resolver has not caught up yet.
     """
 
     def __init__(
@@ -261,15 +268,70 @@ class TemporaryPublicVideo:
         )
 
     @staticmethod
-    def _verify_public_url(url: str, timeout: float = 30.0) -> None:
+    def _doh_resolves(hostname: str) -> bool:
+        """Check public DNS without relying on the Windows/ISP resolver cache."""
+        response = requests.get(
+            _DOH_URL,
+            params={"name": hostname, "type": "A"},
+            headers={"Accept": "application/dns-json"},
+            timeout=8,
+        )
+        response.raise_for_status()
+        data = response.json()
+        if data.get("Status") != 0:
+            return False
+        answers = data.get("Answer") or []
+        return any(answer.get("type") in {1, 5} and answer.get("data") for answer in answers)
+
+    def _verify_public_url(self, url: str, timeout: float = 90.0) -> None:
+        """Wait for public DNS, then best-effort test the actual MP4 URL.
+
+        Cloudflare documents a brief DNS warm-up for brand-new quick-tunnel hostnames. A Windows
+        resolver can cache the initial NXDOMAIN longer than Cloudflare's public DNS. Once 1.1.1.1
+        resolves the hostname, Kling's external fetcher should also be able to resolve it, so a
+        local NameResolutionError is treated as a local cache issue rather than a fatal tunnel error.
+        """
+        hostname = urlparse(url).hostname or ""
+        if not hostname:
+            raise RuntimeError(f"Ongeldige tijdelijke tunnel-URL: {url}")
+
+        if self.progress:
+            self.progress("Wachten tot de tijdelijke Cloudflare-URL wereldwijd in DNS staat…")
+
         deadline = time.monotonic() + timeout
-        last_error = ""
+        doh_ready = False
+        last_doh_error = ""
         while time.monotonic() < deadline:
+            if self.process is not None and self.process.poll() is not None:
+                raise RuntimeError("Cloudflare Quick Tunnel stopte onverwacht tijdens DNS-warm-up.")
+            try:
+                if self._doh_resolves(hostname):
+                    doh_ready = True
+                    break
+            except requests.RequestException as exc:
+                last_doh_error = str(exc)
+            except (ValueError, TypeError) as exc:
+                last_doh_error = str(exc)
+            time.sleep(1.5)
+
+        if not doh_ready:
+            detail = f" Laatste DNS-fout: {last_doh_error}" if last_doh_error else ""
+            raise RuntimeError(
+                "De tijdelijke Cloudflare-hostnaam verscheen niet tijdig in publieke DNS." + detail
+            )
+
+        # Give edge propagation/TLS a few more seconds after DNS first appears.
+        time.sleep(3.0)
+
+        last_error = ""
+        saw_local_dns_error = False
+        local_deadline = time.monotonic() + 20.0
+        while time.monotonic() < local_deadline:
             try:
                 response = requests.get(
                     url,
                     headers={"Range": "bytes=0-63"},
-                    timeout=10,
+                    timeout=8,
                     allow_redirects=True,
                 )
                 if response.status_code in {200, 206} and response.content:
@@ -277,7 +339,20 @@ class TemporaryPublicVideo:
                 last_error = f"HTTP {response.status_code}"
             except requests.RequestException as exc:
                 last_error = str(exc)
-            time.sleep(1.0)
+                text = str(exc).lower()
+                if "nameresolutionerror" in text or "getaddrinfo failed" in text or "failed to resolve" in text:
+                    saw_local_dns_error = True
+            time.sleep(1.5)
+
+        if saw_local_dns_error:
+            # Public DoH already resolves it; do not let a stale Windows/ISP DNS cache abort the job.
+            if self.progress:
+                self.progress(
+                    "Cloudflare-URL staat publiek in DNS. Lokale Windows-DNS loopt nog achter; "
+                    "we laten Kling de URL extern ophalen…"
+                )
+            return
+
         raise RuntimeError(f"Tijdelijke video-URL werd niet bereikbaar. Laatste fout: {last_error}")
 
     def __enter__(self) -> str:
