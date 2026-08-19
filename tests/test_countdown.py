@@ -18,10 +18,20 @@ def test_scene_prompts_force_camera_contact():
 
 
 def test_cast_modes_keep_seven_landmark_scenes():
-    for cast in ("Alleen vrouwen", "Alleen mannen", "Beide", "Non-binair en trans"):
+    for cast in (
+        "Dezelfde vrouw", "Dezelfde man", "Wisselende vrouwen",
+        "Wisselende mannen", "Beide", "Non-binair en trans",
+    ):
         scenes = default_scenes(cast)
         assert len(scenes) == 7
         assert "Eiffel Tower" in scenes[0].environment
         assert "Statue of Liberty" in scenes[1].environment
         assert "Taj Mahal" in scenes[2].environment
         assert "Big Ben" in scenes[3].environment
+
+
+def test_same_person_modes_repeat_identity_description():
+    for cast in ("Dezelfde vrouw", "Dezelfde man"):
+        scenes = default_scenes(cast)
+        assert len({scene.person for scene in scenes}) == 1
+        assert "identical face, hair and body proportions" in scenes[0].person

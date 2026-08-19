@@ -37,11 +37,13 @@ LANDMARKS = [
 ]
 
 CASTS = {
-    "Alleen vrouwen": [
+    "Dezelfde vrouw": ["the same athletic woman in her mid thirties, identical face, hair and body proportions in every scene"],
+    "Dezelfde man": ["the same athletic man in his mid thirties, identical face, hair and body proportions in every scene"],
+    "Wisselende vrouwen": [
         "athletic woman in her late twenties", "athletic woman in her mid thirties",
         "athletic woman in her forties", "athletic woman in her early fifties",
     ],
-    "Alleen mannen": [
+    "Wisselende mannen": [
         "athletic man in his late twenties", "athletic man in his mid thirties",
         "athletic man in his forties", "athletic man in his early fifties",
     ],

@@ -44,7 +44,11 @@ scenes: list[Scene] = []
 with tab_plan:
     cast_choice = st.radio(
         "Wie telt af?",
-        ["Alleen vrouwen", "Alleen mannen", "Beide", "Non-binair en trans"],
+        [
+            "Dezelfde vrouw", "Dezelfde man",
+            "Wisselende vrouwen", "Wisselende mannen",
+            "Beide", "Non-binair en trans",
+        ],
         horizontal=True,
         help="De gekozen groep wordt verdeeld over alle zeven wereldscènes.",
     )
@@ -66,10 +70,26 @@ with tab_generate:
         "Beste resultaat: gebruik per scène een AI-character-afbeelding en één rustige motion-reference "
         "waarin iemand recht in de camera kijkt. Kling zet de beweging over op de AI-persoon."
     )
+    same_person = cast_choice in ("Dezelfde vrouw", "Dezelfde man")
+    shared_image = None
+    if same_person:
+        st.success(
+            "Identiteitsmodus actief: upload hieronder één AI-personage. "
+            "Dezelfde referentie wordt bij alle zeven wereldscènes gebruikt."
+        )
+        shared_image = st.file_uploader(
+            "Gedeelde AI-characterafbeelding",
+            ["png", "jpg", "jpeg", "webp"],
+            key="shared_identity_image",
+        )
     for i, scene in enumerate(scenes):
         st.markdown(f"#### Scène {i + 1}")
         c1, c2, c3 = st.columns(3)
-        image = c1.file_uploader("AI-personage", ["png", "jpg", "jpeg", "webp"], key=f"image_{i}")
+        image = shared_image if same_person else c1.file_uploader(
+            "AI-personage", ["png", "jpg", "jpeg", "webp"], key=f"image_{i}"
+        )
+        if same_person:
+            c1.caption("Gedeelde identiteit")
         motion = c2.file_uploader("Blik/mond-motion", ["mp4", "mov", "m4v"], key=f"motion_{i}")
         ready = c3.file_uploader("Of kant-en-klare AI-clip", ["mp4", "mov", "m4v"], key=f"ready_{i}")
         clip_path = project_dir / "clips" / f"scene_{i + 1:02d}.mp4"
@@ -85,7 +105,9 @@ with tab_generate:
             elif not image or not motion:
                 st.error("Upload voor deze scène een AI-personage en motion-reference.")
             else:
-                image_path = project_dir / "uploads" / f"scene_{i + 1:02d}_character.png"
+                image_path = project_dir / "uploads" / (
+                    "shared_character.png" if same_person else f"scene_{i + 1:02d}_character.png"
+                )
                 motion_path = project_dir / "uploads" / f"scene_{i + 1:02d}_motion.mp4"
                 image_path.write_bytes(image.getbuffer())
                 motion_path.write_bytes(motion.getbuffer())
