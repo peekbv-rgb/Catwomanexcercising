@@ -16,3 +16,12 @@ def test_scene_prompts_force_camera_contact():
     assert len(scenes) == 7
     assert all("straight into the camera lens" in scene.prompt() for scene in scenes)
 
+
+def test_cast_modes_keep_seven_landmark_scenes():
+    for cast in ("Alleen vrouwen", "Alleen mannen", "Beide", "Non-binair en trans"):
+        scenes = default_scenes(cast)
+        assert len(scenes) == 7
+        assert "Eiffel Tower" in scenes[0].environment
+        assert "Statue of Liberty" in scenes[1].environment
+        assert "Taj Mahal" in scenes[2].environment
+        assert "Big Ben" in scenes[3].environment

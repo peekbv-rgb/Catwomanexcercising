@@ -26,15 +26,47 @@ class Scene:
         )
 
 
-def default_scenes() -> list[Scene]:
+LANDMARKS = [
+    "Paris at blue hour, Eiffel Tower clearly visible in the background",
+    "New York harbor at sunrise, Statue of Liberty clearly visible",
+    "Agra at golden hour, Taj Mahal clearly visible in the background",
+    "London after rain, Big Ben and Westminster clearly visible",
+    "Sydney waterfront at dawn, Sydney Opera House clearly visible",
+    "Rio de Janeiro at sunset, Christ the Redeemer clearly visible",
+    "Rome at night, Colosseum clearly visible with tasteful architectural lighting",
+]
+
+CASTS = {
+    "Alleen vrouwen": [
+        "athletic woman in her late twenties", "athletic woman in her mid thirties",
+        "athletic woman in her forties", "athletic woman in her early fifties",
+    ],
+    "Alleen mannen": [
+        "athletic man in his late twenties", "athletic man in his mid thirties",
+        "athletic man in his forties", "athletic man in his early fifties",
+    ],
+    "Beide": [
+        "athletic woman in her late twenties", "athletic man in his early thirties",
+        "athletic woman in her forties", "athletic man in his fifties",
+    ],
+    "Non-binair en trans": [
+        "athletic non-binary adult", "athletic transgender woman",
+        "athletic transgender man", "athletic gender-diverse adult",
+    ],
+}
+
+
+def default_scenes(cast: str = "Beide") -> list[Scene]:
+    people = CASTS.get(cast, CASTS["Beide"])
+    outfits = [
+        "electric-blue performance outfit", "black and orange technical sportswear",
+        "silver futuristic training set", "deep-green premium activewear",
+        "purple and gold dance-fitness outfit", "red high-fashion sportswear",
+        "white championship outfit",
+    ]
     return [
-        Scene("athletic woman in her late twenties", "electric-blue performance outfit", "neon rooftop at blue hour"),
-        Scene("athletic man in his early thirties", "black and orange technical sportswear", "minimal concrete gym"),
-        Scene("athletic woman in her forties", "silver futuristic training set", "desert sunrise with soft wind"),
-        Scene("athletic man in his fifties", "deep-green premium activewear", "lush glasshouse with sun rays"),
-        Scene("athletic non-binary adult", "purple and gold dance-fitness outfit", "nightclub-inspired studio"),
-        Scene("athletic woman in her thirties", "red high-fashion sportswear", "modern city tunnel"),
-        Scene("athletic man in his late twenties", "white championship outfit", "bright arena tunnel"),
+        Scene(people[i % len(people)], outfits[i], LANDMARKS[i])
+        for i in range(7)
     ]
 
 

@@ -42,9 +42,15 @@ tab_plan, tab_generate, tab_finish = st.tabs(
 
 scenes: list[Scene] = []
 with tab_plan:
+    cast_choice = st.radio(
+        "Wie telt af?",
+        ["Alleen vrouwen", "Alleen mannen", "Beide", "Non-binair en trans"],
+        horizontal=True,
+        help="De gekozen groep wordt verdeeld over alle zeven wereldscènes.",
+    )
     st.subheader("Zeven wisselmomenten")
     st.write("Pas per scène persoon, kleding en omgeving aan. De blik-in-camera-instructie wordt automatisch toegevoegd.")
-    for i, preset in enumerate(default_scenes()):
+    for i, preset in enumerate(default_scenes(cast_choice)):
         with st.expander(f"Scène {i + 1} · vanaf ongeveer {i * 10} sec", expanded=i < 2):
             c1, c2, c3 = st.columns(3)
             person = c1.text_input("AI-persoon", preset.person, key=f"person_{i}")
@@ -135,4 +141,3 @@ st.caption(
     "AI Countdown Studio · label AI-personen waar het platform dat vereist · "
     "gebruik geen echte persoon zonder toestemming."
 )
-
